@@ -1,0 +1,12 @@
+# Datos: se regeneran con el pipeline, no se versionan.
+data/raw/
+data/warehouse/
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+.streamlit/secrets.toml
+.DS_Store
+Thumbs.db

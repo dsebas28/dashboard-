@@ -1,0 +1,16 @@
+# El tablero se dibuja con una paleta validada para modo claro (separacion
+# CVD comprobada contra la superficie #fcfcfb). Se fija el tema para que los
+# graficos y la interfaz no se desalineen si el navegador pide modo oscuro.
+[theme]
+base = "light"
+primaryColor = "#2a78d6"
+backgroundColor = "#fcfcfb"
+secondaryBackgroundColor = "#f6f5f2"
+textColor = "#0b0b0b"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false
