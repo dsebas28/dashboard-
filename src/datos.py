@@ -10,10 +10,22 @@ El almacen tiene dos niveles y el dashboard usa los dos:
   - `mart.*`   capa publicada por `sql/marts/`. Se usa donde el calculo es
                global por definicion (analisis de cesta) o donde interesa
                mostrar el resultado del proceso batch (trazabilidad de limpieza).
+
+Dos motores con el mismo SQL:
+
+  - Con la variable DATABASE_URL definida, el tablero lee de PostgreSQL (el
+    almacen publicado por src/publish_postgres.py).
+  - Sin ella, lee el archivo DuckDB, sin necesidad de ningun servidor.
+
+Las consultas de este modulo estan escritas en el SQL comun a los dos motores
+(nada de funciones exclusivas de uno solo), asi que el resultado es identico.
 """
 
 from __future__ import annotations
 
+import datetime as dt
+import os
+from decimal import Decimal
 from pathlib import Path
 
 import duckdb
@@ -21,10 +33,17 @@ import pandas as pd
 import streamlit as st
 
 BD = Path(__file__).resolve().parents[1] / "data" / "warehouse" / "retail.duckdb"
+DATABASE_URL = os.environ.get("DATABASE_URL")
+MOTOR = "PostgreSQL" if DATABASE_URL else "DuckDB"
 
 
 @st.cache_resource(show_spinner=False)
-def conexion() -> duckdb.DuckDBPyConnection:
+def conexion():
+    if DATABASE_URL:
+        import psycopg
+
+        # Sesion de solo lectura: el tablero nunca modifica el almacen.
+        return psycopg.connect(DATABASE_URL, autocommit=True, options="-c default_transaction_read_only=on")
     if not BD.exists():
         st.error(
             "No se encuentra el almacen. Ejecuta primero:\n\n"
@@ -34,7 +53,28 @@ def conexion() -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(BD), read_only=True)
 
 
+def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
+    """PostgreSQL devuelve NUMERIC como Decimal y DATE como date: se convierten
+    a float y datetime para que pandas y Plotly reciban lo mismo que con DuckDB."""
+    for col in df.columns:
+        muestra = df[col].dropna()
+        if muestra.empty:
+            continue
+        valor = muestra.iloc[0]
+        if isinstance(valor, Decimal):
+            df[col] = df[col].astype(float)
+        elif isinstance(valor, dt.date) and not isinstance(valor, dt.datetime):
+            df[col] = pd.to_datetime(df[col])
+    return df
+
+
 def _consulta(sql: str, params: list | None = None) -> pd.DataFrame:
+    if DATABASE_URL:
+        with conexion().cursor() as cur:
+            # psycopg usa %s como marcador de parametro; DuckDB usa ?
+            cur.execute(sql.replace("?", "%s"), params or [])
+            columnas = [c.name for c in cur.description]
+            return _normalizar(pd.DataFrame(cur.fetchall(), columns=columnas))
     return conexion().execute(sql, params or []).df()
 
 
@@ -171,20 +211,22 @@ def rfm(filtro: str, params: list) -> pd.DataFrame:
             WHERE {filtro} AND l.computa_ingreso
               AND l.cliente_id <> -1 AND l.naturaleza = 'venta'
         ),
-        referencia AS (SELECT MAX(fecha) + INTERVAL 1 DAY AS hoy FROM v),
+        referencia AS (SELECT MAX(fecha) + 1 AS hoy FROM v),
         metricas AS (
             SELECT
                 cliente_id,
-                DATE_DIFF('day', MAX(fecha), (SELECT hoy FROM referencia)) AS recencia_dias,
+                -- fecha - fecha da los dias transcurridos en DuckDB y en PostgreSQL
+                (SELECT hoy FROM referencia) - MAX(fecha)                  AS recencia_dias,
                 COUNT(DISTINCT factura)                                    AS frecuencia,
                 ROUND(SUM(importe), 2)                                     AS monetario
             FROM v GROUP BY 1
         ),
         puntuado AS (
             SELECT *,
-                6 - NTILE(5) OVER (ORDER BY recencia_dias) AS r,
-                NTILE(5) OVER (ORDER BY frecuencia)        AS f,
-                NTILE(5) OVER (ORDER BY monetario)         AS m
+                -- cliente_id desempata los quintiles: mismo resultado en cada motor y ejecucion
+                6 - NTILE(5) OVER (ORDER BY recencia_dias, cliente_id) AS r,
+                NTILE(5) OVER (ORDER BY frecuencia, cliente_id)        AS f,
+                NTILE(5) OVER (ORDER BY monetario, cliente_id)         AS m
             FROM metricas
         )
         SELECT p.*, c.pais,
@@ -222,12 +264,14 @@ def cohortes(filtro: str, params: list) -> pd.DataFrame:
             FROM v JOIN primera p USING (cliente_id)
         ),
         conteo AS (
-            SELECT cohorte, DATE_DIFF('month', cohorte, mes) AS mes_indice,
+            SELECT cohorte,
+                   CAST((EXTRACT(YEAR FROM mes) - EXTRACT(YEAR FROM cohorte)) * 12
+                        + EXTRACT(MONTH FROM mes) - EXTRACT(MONTH FROM cohorte) AS INTEGER) AS mes_indice,
                    COUNT(DISTINCT cliente_id) AS clientes
             FROM actividad GROUP BY 1, 2
         )
         SELECT
-            strftime(c.cohorte, '%Y-%m') AS cohorte,
+            LEFT(CAST(c.cohorte AS VARCHAR), 7) AS cohorte,
             c.mes_indice,
             c.clientes,
             t.clientes AS tamano,
@@ -312,6 +356,12 @@ def tabla_mart(nombre: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def inventario_tablas() -> pd.DataFrame:
+    # El catalogo de tablas es lo unico propio de cada motor.
+    if DATABASE_URL:
+        return _consulta("""
+            SELECT schemaname AS esquema, relname AS tabla, n_live_tup AS filas
+            FROM pg_stat_user_tables ORDER BY 1, 2
+        """)
     return _consulta("""
         SELECT schema_name AS esquema, table_name AS tabla, estimated_size AS filas
         FROM duckdb_tables() ORDER BY 1, 2

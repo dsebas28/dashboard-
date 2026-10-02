@@ -2,8 +2,9 @@
 Dashboard de analisis comercial - Online Retail II
 
 Tablero sobre las transacciones reales de un minorista online britanico
-(diciembre 2009 - diciembre 2011). Los datos viven en un almacen DuckDB
-construido por el pipeline de `src/`; esta capa solo consulta y dibuja.
+(diciembre 2009 - diciembre 2011). Los datos viven en un almacen dimensional
+construido por el pipeline de `src/`: en PostgreSQL si DATABASE_URL esta
+definida, o en el archivo DuckDB si no. Esta capa solo consulta y dibuja.
 
 Ejecutar con:  streamlit run app.py
 """
@@ -132,6 +133,7 @@ with st.sidebar:
         "**Nota**  \nRFM, cohortes y clasificacion ABC se recalculan sobre el "
         "periodo seleccionado, no son cifras precalculadas."
     )
+    st.caption(f"**Motor**  \n{datos.MOTOR}")
 
 filtro, params = datos.construir_filtro(desde, hasta, paises_filtro)
 
@@ -485,8 +487,10 @@ with pestanas[4]:
 
     st.markdown("#### Modelo dimensional")
     st.caption(
-        "Esquema en estrella sobre DuckDB: un hecho al grano de linea de factura, "
-        "cuatro dimensiones conformadas y una capa `mart` con los calculos publicados."
+        f"Esquema en estrella servido desde {datos.MOTOR}: un hecho al grano de linea de factura, "
+        "cuatro dimensiones conformadas y una capa `mart` con los calculos publicados. "
+        "DuckDB construye el almacen; PostgreSQL lo sirve con claves primarias y foraneas, "
+        "restricciones CHECK e indices."
     )
     st.code(
         """stg  ── limpieza y tipado
@@ -515,7 +519,8 @@ mart ── capa publicada
 
     st.markdown("#### El SQL del modelo")
     raiz = Path(__file__).parent / "sql"
-    archivos = sorted(raiz.glob("*.sql")) + sorted((raiz / "marts").glob("*.sql"))
+    archivos = (sorted(raiz.glob("*.sql")) + sorted((raiz / "marts").glob("*.sql"))
+                + sorted((raiz / "postgres").glob("*.sql")))
     elegido = st.selectbox(
         "Archivo", archivos,
         format_func=lambda p: p.relative_to(raiz).as_posix(),

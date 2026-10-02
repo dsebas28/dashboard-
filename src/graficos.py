@@ -63,8 +63,10 @@ def _base(fig: go.Figure, alto: int = 380, leyenda: bool = False) -> go.Figure:
         legend=dict(
             orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
             bgcolor="rgba(0,0,0,0)", font=dict(color=TINTA_SUAVE),
+            title=dict(text=""),
         ),
-        title=dict(font=dict(size=15, color=TINTA), x=0, xanchor="left", y=0.96),
+        # text vacio explicito: sin el, el Plotly.js que incluye Streamlit pinta "undefined"
+        title=dict(text="", font=dict(size=15, color=TINTA), x=0, xanchor="left", y=0.96),
     )
     # Rejilla de un paso respecto a la superficie, continua y fina.
     fig.update_xaxes(showgrid=False, showline=False, zeroline=False,

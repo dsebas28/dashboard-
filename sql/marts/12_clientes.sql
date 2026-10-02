@@ -30,9 +30,11 @@ puntuado AS (
         *,
         -- Quintiles. En recencia el orden se invierte: haber comprado hace
         -- poco es lo bueno, asi que 5 corresponde a la menor recencia.
-        6 - NTILE(5) OVER (ORDER BY recencia_dias)  AS r,
-        NTILE(5) OVER (ORDER BY frecuencia)         AS f,
-        NTILE(5) OVER (ORDER BY monetario)          AS m
+        -- cliente_id desempata: sin el, los clientes empatados en la frontera
+        -- de un quintil caerian en uno u otro segun el motor o la ejecucion.
+        6 - NTILE(5) OVER (ORDER BY recencia_dias, cliente_id)  AS r,
+        NTILE(5) OVER (ORDER BY frecuencia, cliente_id)         AS f,
+        NTILE(5) OVER (ORDER BY monetario, cliente_id)          AS m
     FROM metricas
 )
 SELECT
