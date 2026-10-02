@@ -1,0 +1,62 @@
+erDiagram
+    fact_lineas {
+        bigint linea_id PK
+        varchar factura FK
+        varchar sku FK
+        bigint cliente_id FK
+        date fecha FK
+        varchar pais FK
+        timestamp fecha_hora
+        smallint hora
+        integer cantidad
+        numeric precio_unitario
+        numeric importe
+    }
+    fact_facturas {
+        varchar factura PK
+        bigint cliente_id FK
+        date fecha FK
+        varchar pais FK
+        timestamp fecha_hora
+        integer lineas
+        integer skus_distintos
+        bigint unidades
+        numeric importe
+    }
+    dim_fecha {
+        date fecha PK
+        smallint anio
+        smallint mes
+        smallint trimestre
+        date inicio_mes
+        char anio_mes
+    }
+    dim_cliente {
+        bigint cliente_id PK
+        varchar pais
+        date primera_compra
+        date ultima_compra
+        integer dias_de_vida
+        boolean identificado
+    }
+    dim_producto {
+        varchar sku PK
+        text descripcion
+        varchar tipo_linea
+        numeric precio_mediano
+        date primera_venta
+        date ultima_venta
+    }
+    dim_pais {
+        varchar pais PK
+        varchar region
+        boolean es_mercado_local
+    }
+    dim_pais ||--o{ fact_facturas : "pais"
+    dim_fecha ||--o{ fact_facturas : "fecha"
+    dim_cliente ||--o{ fact_facturas : "cliente_id"
+    dim_pais ||--o{ fact_lineas : "pais"
+    dim_fecha ||--o{ fact_lineas : "fecha"
+    dim_cliente ||--o{ fact_lineas : "cliente_id"
+    dim_producto ||--o{ fact_lineas : "sku"
+    fact_facturas ||--o{ fact_lineas : "factura"

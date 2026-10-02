@@ -2,7 +2,15 @@
 
 Análisis end-to-end sobre **1.067.371 transacciones reales** de un minorista
 online británico: desde el fichero crudo hasta un tablero interactivo, pasando
-por un almacén dimensional en DuckDB con el SQL versionado.
+por un almacén dimensional con el SQL versionado: **DuckDB** lo construye y
+**PostgreSQL** lo sirve con claves foráneas, restricciones e índices.
+
+![Resumen ejecutivo](docs/screenshots/01-resumen-ejecutivo.png)
+
+| Documento | Contenido |
+|---|---|
+| [**Guía del código**](docs/GUIA-DEL-CODIGO.md) | Cómo está construido el pipeline, el almacén, la publicación en PostgreSQL y el tablero, con fragmentos del código explicados |
+| [**Base de datos (PostgreSQL)**](docs/BASE-DE-DATOS.md) | Esquema en estrella, decisiones de diseño, los dos motores y 10 consultas con su resultado real |
 
 No es un dataset de juguete ni datos sintéticos. Son las ventas reales de una
 empresa de artículos de regalo del Reino Unido entre el **1 de diciembre de 2009
@@ -48,8 +56,8 @@ del dato*. Un tablero que no se puede auditar no debería usarse para decidir.
 **Cuatro conclusiones de negocio:**
 
 1. **El negocio es mayorista disfrazado de tienda online.** El 20 % de los
-   clientes genera el **77 % de la facturación**, y solo 1.324 «Campeones»
-   —el 22,6 % del padrón— aportan el 68,7 %. Perder veinte cuentas duele más
+   clientes genera el **77 % de la facturación**, y solo 1.281 «Campeones»
+   —el 21,9 % del padrón— aportan el 68,1 %. Perder veinte cuentas duele más
    que perder mil compradores ocasionales.
 2. **La estacionalidad manda.** Septiembre a diciembre son 4 de 12 meses pero
    concentran el **46,7 %** de la facturación. Noviembre de 2011 cerró en
@@ -69,13 +77,33 @@ del dato*. Un tablero que no se puede auditar no debería usarse para decidir.
 
 ---
 
+## Capturas
+
+| | |
+|---|---|
+| ![Clientes](docs/screenshots/02-clientes.png) | ![Productos](docs/screenshots/03-productos.png) |
+| **Clientes**: segmentos RFM y concentración de la facturación | **Productos**: ranking y clasificación ABC |
+| ![Mercados](docs/screenshots/04-mercados.png) | ![Modelo y calidad del dato](docs/screenshots/05-modelo-y-calidad.png) |
+| **Mercados** por facturación | **Modelo y calidad del dato**: la traza de limpieza |
+
+---
+
 ## Arquitectura
 
 ```
-Excel (UCI)  ──►  Parquet  ──►  DuckDB  ──►  Streamlit
-   45 MB          ingesta      almacén       tablero
-                              dimensional
+Excel (UCI)  ──►  Parquet  ──►  DuckDB  ──►  PostgreSQL  ──►  Streamlit
+   45 MB          ingesta      construye      sirve           tablero
+                               y valida     (opcional)
 ```
+
+**Dos motores, el mismo SQL.** DuckDB transforma el millón de líneas en diez
+segundos y deja el almacén en un único archivo: quien clona el repositorio lo
+tiene funcionando sin servidor. `src/publish_postgres.py` lo publica además en
+**PostgreSQL**, donde el esquema en estrella gana lo que un archivo analítico no
+tiene: claves primarias y foráneas, restricciones `CHECK`, índices pensados para
+los filtros del tablero y acceso concurrente. Con `DATABASE_URL` definida, el
+tablero lee de PostgreSQL; sin ella, de DuckDB. Un test (`tests/test_motores.py`)
+comprueba que las ocho consultas del tablero devuelven lo mismo en los dos.
 
 ```
 stg  ── limpieza y tipado
@@ -155,13 +183,31 @@ solape. Si algo falla, la construcción se detiene.
 ## Puesta en marcha
 
 ```bash
-git clone <este-repo>
-cd dashboard-v3
+git clone https://github.com/dsebas28/dashboard-.git
+cd dashboard-
 pip install -r requirements.txt
 
 python src/ingest.py           # descarga UCI y convierte a Parquet (~3 min)
-python src/build_warehouse.py  # construye y valida el almacén (~10 s)
-streamlit run app.py
+python src/build_warehouse.py  # construye y valida el almacén DuckDB (~10 s)
+streamlit run app.py           # tablero sobre DuckDB, sin servidor
+```
+
+Para servirlo desde **PostgreSQL**:
+
+```bash
+docker compose up -d                                   # o un PostgreSQL propio
+export DATABASE_URL=postgresql://retail:retail@localhost:5432/retail
+python src/publish_postgres.py # copia y valida el almacén (~2 min)
+streamlit run app.py           # el tablero indica "Motor: PostgreSQL"
+```
+
+En Windows, `set DATABASE_URL=...` en lugar de `export`. La publicación es una
+sola transacción: si una clave foránea, un `CHECK` o el recuento de filas no
+cuadra, PostgreSQL conserva la versión anterior.
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests -q      # misma respuesta en DuckDB y PostgreSQL
 ```
 
 Los datos no se versionan: `src/ingest.py` los descarga de la fuente original y
@@ -177,13 +223,17 @@ el almacén se reconstruye entero en diez segundos. El repositorio guarda el
 ├── src/
 │   ├── ingest.py               Descarga UCI → Parquet
 │   ├── build_warehouse.py      Ejecuta el SQL y valida el resultado
+│   ├── publish_postgres.py     Publica el almacén en PostgreSQL y lo valida
 │   ├── datos.py                Consultas parametrizadas (filtros en vivo)
 │   └── graficos.py             Figuras Plotly, paleta y especificaciones
 ├── sql/
 │   ├── 01_staging.sql          Limpieza, con cada regla documentada
 │   ├── 02_dimensiones.sql      dim_fecha · dim_cliente · dim_producto · dim_pais
 │   ├── 03_hechos.sql           fact_lineas · fact_facturas
-│   └── marts/                  KPIs · evolución · RFM · cohortes · ABC · cesta
+│   ├── marts/                  KPIs · evolución · RFM · cohortes · ABC · cesta
+│   └── postgres/               Esquema con claves e índices para PostgreSQL
+├── tests/test_motores.py       Las consultas dan lo mismo en los dos motores
+├── docs/                       Capturas, guía del código y base de datos
 └── notebooks/
     └── 01_exploracion.ipynb    El perfilado que originó las reglas de limpieza
 ```
@@ -192,11 +242,13 @@ el almacén se reconstruye entero en diez segundos. El repositorio guarda el
 
 ## Stack
 
-`Python 3.14` · `DuckDB 1.5` · `pandas 3.0` · `Streamlit 1.56` · `Plotly 6.7`
+`Python 3.14` · `DuckDB 1.5` · `PostgreSQL 16` · `psycopg 3` · `pandas 3.0` · `Streamlit 1.56` · `Plotly 6.7`
 
-DuckDB en lugar de un servidor de base de datos porque el almacén es un único
-archivo de 38 MB: quien clone el repositorio ejecuta dos comandos y tiene el
-modelo entero funcionando, sin levantar contenedores ni configurar credenciales.
+DuckDB para construir porque el almacén es un único archivo de 38 MB: quien
+clone el repositorio ejecuta dos comandos y tiene el modelo entero funcionando,
+sin levantar contenedores ni configurar credenciales. PostgreSQL para servir,
+porque es lo que se usaría en una empresa: integridad garantizada por la base
+de datos, índices y varios usuarios a la vez.
 
 ---
 
